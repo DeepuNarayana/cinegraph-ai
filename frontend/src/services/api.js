@@ -1,5 +1,4 @@
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+const API_BASE_URL = "https://cinegraph-ai-5.onrender.com";
 
 export async function getRecommendations(userName) {
   const response = await fetch(
