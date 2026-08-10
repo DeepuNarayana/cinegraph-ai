@@ -1,148 +1,115 @@
-CineGraph AI
+# CineGraph AI
 
-Graph-powered movie recommendation application built with React,FastAPI, and CognoDB.
+CineGraph AI is a graph-based movie recommendation application built with **React, FastAPI, and CognoDB**.
 
-CineGraph AI recommends movies for a user by traversing relationships ina graph. It looks at movies the user has already watched, finds theirshared genres, discovers other movies connected to those genres,excludes movies the user has already watched, and ranks the remainingcandidates by the number of matching genres.
+The application accepts a username and recommends movies based on the genres of movies that user has already watched.
 
-Features
+## What it does
 
-User-based movie recommendations
-Graph-based multi-hop recommendation logic
-CognoDB graph database
-Parameterized Cypher queries
-FastAPI REST API
-React frontend
-Dynamic username input
-Excludes already-watched movies
-Ranks recommendations by matching genre count
-Seed script for reproducible sample data
-Use Case
+For a given user, the application:
 
-The application demonstrates how graph relationships can be used todiscover relevant movie recommendations.
+1. Finds movies the user has watched.
+2. Finds the genres of those movies.
+3. Traverses those genre relationships to discover other movies.
+4. Excludes movies the user has already watched.
+5. Groups candidates by movie.
+6. Ranks recommendations by the number of matching genres.
 
+For example, for `Deepu`, the current sample graph recommends **The Martian** because it shares both `Sci-Fi` and `Drama` with movies Deepu has already watched.
+
+---
+
+## Why a graph database?
+
+The main problem here is relationship discovery rather than simple record lookup.
+
+A recommendation requires traversing:
+
+```text
 User
-  |
-  | WATCHED
-  v
+  │
+  │ WATCHED
+  ▼
 Movie
-  |
-  | IN_GENRE
-  v
+  │
+  │ IN_GENRE
+  ▼
 Genre
-  ^
-  | IN_GENRE
-  |
+  ▲
+  │ IN_GENRE
+  │
 Movie Candidate
+```
 
-For a user such as Deepu, the system finds the genres associated withmovies they have watched and uses those relationships to discover candidate movies.
+This relationship is naturally represented in a graph.
 
-Why a Graph Database?
+With CognoDB, the recommendation can be expressed as a multi-hop traversal across `User → Movie → Genre → Movie`, while also checking whether the user has already watched the candidate.
 
-The core problem is relationship discovery.
+This is the main reason a graph model fits this use case better than treating the data as independent movie, user, and genre records.
 
-A recommendation requires traversing several connected entities:
+---
 
-User -> WATCHED -> Movie -> IN_GENRE -> Genre
-                                      ^
-                                      |
-                              IN_GENRE |
-                                      |
-                                Movie Candidate
+## Architecture
 
-A graph database represents these relationships directly. This makesmulti-hop traversal natural and keeps the recommendation logic focusedon the connections between users, movies, and genres.
+```mermaid
+flowchart TD
+    A[React Frontend] -->|HTTP Request| B[FastAPI]
+    B --> C[Recommendation Service]
+    C -->|Parameterized Cypher| D[CognoDB]
+    D --> C
+    C --> B
+    B --> A
+```
 
-Architecture
-+-------------------------+
-|       React UI          |
-|      CineGraph AI       |
-+------------+------------+
-             |
-             | HTTP
-             v
-+-------------------------+
-|        FastAPI          |
-|        REST API         |
-+------------+------------+
-             |
-             v
-+-------------------------+
-| Recommendation Service  |
-|   recommendations.py   |
-+------------+------------+
-             |
-             | Cypher
-             v
-+-------------------------+
-|        CognoDB          |
-|     Graph Database      |
-+-------------------------+
+### Components
 
-Graph Data Model
+* **React** — username input and recommendation UI.
+* **FastAPI** — exposes the REST API.
+* **Recommendation Service** — contains the recommendation query and result processing.
+* **CognoDB** — stores users, movies, genres, and their relationships.
+* **Neo4j Python Driver** — used to connect to CognoDB over Bolt.
 
-+-------------+        WATCHED        +-------------+
-|    User     | --------------------> |    Movie    |
-|-------------|                       |-------------|
-| id          |                       | id          |
-| name        |                       | title       |
-|             |                       | year        |
-+-------------+                       +------+------+
-                                             |
-                                             | IN_GENRE
-                                             v
-                                      +-------------+
-                                      |    Genre    |
-                                      |-------------|
-                                      | name        |
-                                      +------+------+
-                                             ^
-                                             |
-                                             | IN_GENRE
-                                             |
-                                      +-------------+
-                                      |    Movie    |
-                                      |  Candidate  |
-                                      +-------------+
+---
 
-Main entities
-User
-Movie
-Genre
-Main relationships
-WATCHED: User -> Movie
-IN_GENRE: Movie -> Genre
+## Graph Data Model
 
-Recommendation Logic
+```mermaid
+graph LR
+    U[User] -->|WATCHED| M[Movie]
+    M -->|IN_GENRE| G[Genre]
+    G -->|IN_GENRE| C[Movie Candidate]
+```
 
-The recommendation query performs a multi-hop graph traversal:
+### Nodes
 
-Find the requested user.
+| Node    | Properties            |
+| ------- | --------------------- |
+| `User`  | `id`, `name`          |
+| `Movie` | `id`, `title`, `year` |
+| `Genre` | `name`                |
 
-Find movies watched by that user.
+### Relationships
 
-Traverse from watched movies to their genres.
+| Relationship | From  | To    |
+| ------------ | ----- | ----- |
+| `WATCHED`    | User  | Movie |
+| `IN_GENRE`   | Movie | Genre |
 
-Find other movies connected to those genres.
+---
 
-Exclude movies already watched by the user.
+## Recommendation Query
 
-Group candidates by movie.
+The core recommendation uses a multi-hop Cypher traversal:
 
-Collect matching genres.
-
-Count matching genres.
-
-Sort by match count in descending order.
-
-The core Cypher pattern is:
-
+```cypher
 MATCH
-(u:User {name: $user_name})
--[:WATCHED]->
-(watched:Movie)
--[:IN_GENRE]->
-(genre:Genre)
-<-[:IN_GENRE]-
-(recommended:Movie)
+    (u:User {name: $user_name})
+    -[:WATCHED]->
+    (watched:Movie)
+    -[:IN_GENRE]->
+    (genre:Genre)
+    <-[:IN_GENRE]-
+    (recommended:Movie)
 
 WHERE NOT (u)-[:WATCHED]->(recommended)
 
@@ -152,13 +119,43 @@ RETURN
     count(DISTINCT genre) AS match_count
 
 ORDER BY match_count DESC
+```
 
-The user name is supplied as a Cypher parameter rather than concatenatedinto the query.
+The query is parameterized using `$user_name`; the username is passed separately through the Neo4j driver rather than being concatenated into the Cypher string.
 
-Example
+### Recommendation flow
 
-For Deepu, the application returns:
+```text
+User
+ ↓
+Movies already watched
+ ↓
+Genres of those movies
+ ↓
+Other movies using those genres
+ ↓
+Remove already-watched movies
+ ↓
+Group by candidate movie
+ ↓
+Count matching genres
+ ↓
+Rank recommendations
+```
 
+---
+
+## Example
+
+Request:
+
+```text
+GET /recommendations/Deepu
+```
+
+Response:
+
+```json
 {
   "user": "Deepu",
   "recommendations": [
@@ -172,200 +169,206 @@ For Deepu, the application returns:
     }
   ]
 }
+```
 
-For Rahul, the sample graph produces recommendations includingInterstellar and The Martian.
+For `Rahul`, the current sample graph produces recommendations including `Interstellar` and `The Martian`.
 
-Project Structure
+---
 
-CineGraph AI/
-|
-+-- backend/
-|   +-- __init__.py
-|   +-- db.py
-|   +-- main.py
-|   +-- recommendations.py
-|   +-- seed.py
-|   +-- test_db.py
-|   +-- test_recommendation.py
-|
-+-- frontend/
-|   +-- src/
-|   |   +-- components/
-|   |   +-- services/
-|   |   +-- App.jsx
-|   |   +-- App.css
-|   |   +-- index.css
-|   |   +-- main.jsx
-|   +-- public/
-|   +-- package.json
-|   +-- package-lock.json
-|   +-- vite.config.js
-|
-+-- requirements.txt
-+-- .gitignore
-+-- README.md
+## API
 
-Prerequisites
+### Health check
 
-Python 3.10+
-
-Node.js and npm
-
-A CognoDB instance
-
-CognoDB connection credentials
-
-CognoDB Setup
-
-Create or use a CognoDB graph database and obtain the connection detailsrequired by the application.
-
-Configure the backend through environment variables.
-
-Create a .env file in the project root:
-
-COGNODB_URI=your_cognodb_uri
-COGNODB_USER=your_cognodb_user
-COGNODB_PASSWORD=your_cognodb_password
-COGNODB_DATABASE=neo4j
-
-Install dependencies
-
-pip install -r requirements.txt
-
-Seed the graph
-
-python -m backend.seed
-
-The seed script creates the sample users, movies, genres, andrelationships required by the application.
-
-Start FastAPI
-
-uvicorn backend.main:app --reload
-
-The API will be available at:
-
-http://127.0.0.1:8000
-
-Swagger documentation:
-
-http://127.0.0.1:8000/docs
-
-Frontend Setup
-
-Open another terminal:
-
-cd frontend
-npm install
-npm run dev
-
-Vite will display the local frontend URL in the terminal.
-
-API
-
-Health/root endpoint
-
+```text
 GET /
+```
 
-Recommendations
+### Recommendations
 
+```text
 GET /recommendations/{user_name}
+```
 
 Example:
 
+```text
 GET /recommendations/Deepu
+GET /recommendations/Rahul
+```
 
-Example response:
+Swagger documentation is available locally at:
 
-{
-  "user": "Deepu",
-  "recommendations": [
-    {
-      "recommendation": "The Martian",
-      "matching_genres": [
-        "Sci-Fi",
-        "Drama"
-      ],
-      "match_count": 2
-    }
-  ]
-}
+```text
+http://127.0.0.1:8000/docs
+```
 
-Seed Data
+---
 
-The seed script creates sample data for:
+## Project Structure
 
-Users
+```text
+CineGraph AI/
+│
+├── backend/
+│   ├── __init__.py
+│   ├── db.py
+│   ├── main.py
+│   ├── recommendations.py
+│   ├── seed.py
+│   ├── test_db.py
+│   └── test_recommendation.py
+│
+├── frontend/
+│   ├── src/
+│   │   ├── components/
+│   │   ├── services/
+│   │   ├── App.jsx
+│   │   ├── App.css
+│   │   ├── index.css
+│   │   └── main.jsx
+│   ├── public/
+│   ├── package.json
+│   ├── package-lock.json
+│   └── vite.config.js
+│
+├── docs/
+│   └── screenshots/
+│       └── cognodb-recommendation-graph.png
+│
+├── .gitignore
+├── README.MD
+└── requirements.txt
+```
 
-Deepu
+---
 
-Rahul
+## Setup
 
-Movies
+### Prerequisites
 
-Interstellar
+* Python 3.10+
+* Node.js and npm
+* A CognoDB instance
 
-Inception
+### 1. Clone the repository
 
-The Martian
+```bash
+git clone https://github.com/DeepuNarayana/cinegraph-ai.git
+cd cinegraph-ai
+```
 
-Genres
+### 2. Configure CognoDB
 
-Sci-Fi
+Create a `.env` file in the project root:
 
-Drama
+```env
+COGNODB_URI=your_cognodb_uri
+COGNODB_USER=cognodb
+COGNODB_PASSWORD=your_cognodb_password
+COGNODB_DATABASE=neo4j
+```
 
-Thriller
+The `.env` file is excluded from Git and should never be committed.
 
-The script also creates WATCHED and IN_GENRE relationships.
+### 3. Install backend dependencies
 
-Database Access Layer
+```bash
+python -m venv .venv
+```
 
-backend/db.py is responsible for:
+Windows:
 
-Loading database configuration from environment variables
+```powershell
+.venv\Scripts\Activate.ps1
+```
 
-Creating the CognoDB driver
+Install dependencies:
 
-Verifying connectivity
+```bash
+pip install -r requirements.txt
+```
 
-Executing parameterized Cypher queries
+### 4. Seed the graph
 
-Closing the driver
+From the project root:
 
-The application does not hard-code database credentials.
+```bash
+python -m backend.seed
+```
 
-Error Handling
+The seed script creates the sample users, movies, genres, and relationships used by the application.
 
-The database layer validates required configuration such as the CognoDBURI and password before creating the driver.
+### 5. Start the backend
 
-Database connectivity is isolated in the database access layer so thatAPI and recommendation logic do not directly manage connection details.
+```bash
+uvicorn backend.main:app --reload
+```
 
-Screenshots
+Backend:
 
-Application UI
+```text
+http://127.0.0.1:8000
+```
 
-Add the final CineGraph AI UI screenshot here.
+Swagger:
 
-docs/screenshots/cinegraph-ui.png
+```text
+http://127.0.0.1:8000/docs
+```
 
-API
+### 6. Start the frontend
 
-Add the Swagger/API response screenshot here.
+Open another terminal:
 
-docs/screenshots/swagger-response.png
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-Graph
+Vite will display the frontend URL in the terminal.
 
-Add the CognoDB graph/query screenshot here.
+---
 
-docs/screenshots/cognodb-graph.png
+## Sample Graph
 
-Demo
+The screenshot below shows the actual recommendation graph in CognoDB.
 
-Live application:
+![CognoDB recommendation graph](docs/screenshots/cognodb-recommendation-graph.png)
 
-TODO: Add hosted application URL
+The graph demonstrates the relationships used by the recommendation query, including:
 
-Screen recording:
+`Deepu → WATCHED → Movie → IN_GENRE → Genre → IN_GENRE → Candidate Movie`
 
-TODO: Add screen recording URL
+---
+
+## Configuration
+
+Database configuration is handled in `backend/db.py`.
+
+The application reads:
+
+```text
+COGNODB_URI
+COGNODB_USER
+COGNODB_PASSWORD
+COGNODB_DATABASE
+```
+
+from environment variables.
+
+Credentials are not stored in the source code or committed to the repository.
+
+---
+
+## Demo
+
+**Hosted application:**
+*To be added after deployment.*
+
+**Screen recording:**
+*To be added after recording the final walkthrough.*
+
+---
+
+
