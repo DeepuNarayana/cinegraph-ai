@@ -3,7 +3,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.recommendations import get_recommendations
+from recommendations import get_recommendations
 
 
 app = FastAPI(
