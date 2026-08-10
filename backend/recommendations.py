@@ -1,4 +1,4 @@
-from db import run_query
+from backend.db import run_query
 
 def get_recommendations(user_name: str):
 
